@@ -79,6 +79,8 @@ void data_log(const char *filename, int operation, int denied)
 	char hash[HASH_LEN];
 	time_t now;
 	struct tm tm;
+	char date[11];         //YYYY-MM-DD + '\0'
+	char tbuf[9];          //HH:MM:SS + '\0'
 	int fd;                //file descriptor
 	int len;               //byte length
     
@@ -88,17 +90,19 @@ void data_log(const char *filename, int operation, int denied)
 
 	//convert time to UTC
 	gmtime_r(&now, &tm);
+	strftime(date, sizeof(date), "%Y-%m-%d", &tm);
+	strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm);
 
 	//Header Composition
-	len = snprintf(line, sizeof(line),
-	    "%d\t%d\t%s\t%04d-%02d-%02d\t%02d:%02d:%02d\t%d\t%d\t%s\n",
+		len = snprintf(line, sizeof(line),
+	    "%d\t%d\t%s\t%s\t%s\t%d\t%d\t%s\n",
 	    (int)getuid(), (int)getpid(),                  //UNIQUE USER ID Proccess ID
 	    filename,                                      //Absolute path of the accessed file
-	    tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,  //Year Month Day
-	    tm.tm_hour, tm.tm_min, tm.tm_sec,              //Hours Minutes Seconds
+	    date,                                          //Year Month Day
+	    tbuf,                                          //Hours Minutes Seconds
 	    operation,                                     // Operation 0=created, 1=opened, 2=written, 3=closed
 	    denied,                                        // Denied 0=success, 1=denied
-	    hash);                                  //File hash
+	    hash);                                         //File hash
 
 	if (len < 0)
 		return;
@@ -118,7 +122,6 @@ void data_log(const char *filename, int operation, int denied)
 int get_path_from_stream(FILE *stream, char *out)
 {
 	char link[64];
-	ssize_t n;
 	int fd;
 
 	if (stream == NULL)
@@ -130,11 +133,9 @@ int get_path_from_stream(FILE *stream, char *out)
 
 	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
 
-	n = readlink(link, out, PATH_MAX - 1);
-	if (n < 0)
+	if (realpath(link, out) == NULL)
 		return -1;
 
-	out[n] = '\0';
 	return 0;
 }
 
