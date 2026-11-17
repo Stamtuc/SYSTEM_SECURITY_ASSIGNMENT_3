@@ -28,7 +28,7 @@ void hash_file(const char *path, char *out)
 {
 	unsigned char md[EVP_MAX_MD_SIZE];
 	unsigned int md_len;
-	unsigned char buf[4096];
+	unsigned char buf[65536];
 	EVP_MD_CTX *ctx;
 	ssize_t n;
 	int fd, i;
@@ -43,7 +43,7 @@ void hash_file(const char *path, char *out)
 		return;
 
 	ctx = EVP_MD_CTX_new();
-	if (ctx == NULL) {
+	if (!ctx) {
 		close(fd);
 		return;
 	}
@@ -77,23 +77,24 @@ void data_log(const char *filename, int operation, int denied)
 {
 	char line[PATH_MAX + 256];
 	char hash[HASH_LEN];
-	time_t now;
 	struct tm tm;
 	char date[11];         //YYYY-MM-DD + '\0'
 	char tbuf[9];          //HH:MM:SS + '\0'
 	int fd;                //file descriptor
 	int len;               //byte length
-    
+
 	hash_file(filename, hash);
-	//current time in seconds
-	now = time(NULL);
+
+
+
+	time_t now = time(NULL);
+	gmtime_r(&now, &tm);
 
 	//convert time to UTC
-	gmtime_r(&now, &tm);
 	strftime(date, sizeof(date), "%Y-%m-%d", &tm);
 	strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm);
 
-	//Header Composition
+	    //Header Composition
 		len = snprintf(line, sizeof(line),
 	    "%d\t%d\t%s\t%s\t%s\t%d\t%d\t%s\n",
 	    (int)getuid(), (int)getpid(),                  //UNIQUE USER ID Proccess ID
@@ -124,7 +125,7 @@ int get_path_from_stream(FILE *stream, char *out)
 	char link[64];
 	int fd;
 
-	if (stream == NULL)
+	if (!stream)
 		return -1;
 
 	fd = fileno(stream);
@@ -133,7 +134,7 @@ int get_path_from_stream(FILE *stream, char *out)
 
 	snprintf(link, sizeof(link), "/proc/self/fd/%d", fd);
 
-	if (realpath(link, out) == NULL)
+	if (!realpath(link, out))
 		return -1;
 
 	return 0;
@@ -159,7 +160,7 @@ fopen(const char *path, const char *mode)
 	original_fopen_ret = (*original_fopen)(path, mode);
 	saved_errno = errno;
 
-	if (realpath(path, abs_path) == NULL)
+	if (!realpath(path, abs_path))
 		snprintf(abs_path, sizeof(abs_path), "%s", path);
 
 	if (!existed && (mode[0] == 'w' || mode[0] == 'a'))
@@ -167,7 +168,7 @@ fopen(const char *path, const char *mode)
 	else
 		operation = 1;
 
-	if (original_fopen_ret == NULL && saved_errno == EACCES)
+	if (!original_fopen_ret && saved_errno == EACCES)
 		denied = 1;
 	else
 		denied = 0;

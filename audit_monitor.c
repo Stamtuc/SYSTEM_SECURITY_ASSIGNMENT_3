@@ -1,4 +1,3 @@
-#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,28 +51,14 @@ usage(void)
 int
 parse_line(char *line, struct log_entry *e)
 {
-	char *fields[8];
-	char *tok;
-	int i = 0;
+	char path[PATH_MAX];
 
-	line[strcspn(line, "\n")] = '\0';
-
-	tok = strtok(line, "\t");
-	while (tok != NULL && i < 8) {
-		fields[i++] = tok;
-		tok = strtok(NULL, "\t");
-	}
-	if (i != 8)
+	if (sscanf(line, "%d\t%d\t%4095[^\t]\t%10s\t%8s\t%d\t%d\t%64s",
+	           &e->uid, &e->pid, path, e->date, e->time,
+	           &e->operation, &e->action_denied, e->filehash) != 8)
 		return -1;
 
-	e->uid = atoi(fields[0]);
-	e->pid = atoi(fields[1]);
-	e->file = strdup(fields[2]);
-	snprintf(e->date, sizeof(e->date), "%s", fields[3]);
-	snprintf(e->time, sizeof(e->time), "%s", fields[4]);
-	e->operation = atoi(fields[5]);
-	e->action_denied = atoi(fields[6]);
-	snprintf(e->filehash, sizeof(e->filehash), "%s", fields[7]);
+	e->file = strdup(path);
 	return 0;
 }
 
@@ -85,25 +70,37 @@ load_log(FILE *log)
 	char line[PATH_MAX + 256];
 	struct log_entry e;
 
-	while (fgets(line, sizeof(line), log) != NULL) {
+	while (fgets(line, sizeof(line), log)) {
 		if (parse_line(line, &e) != 0)
 			continue;
 
 		entries = realloc(entries, (n_entries + 1) * sizeof(struct log_entry));
-		if (entries == NULL) {
+		if (!entries) {
 			perror("realloc");
 			exit(1);
 		}
-		entries[n_entries] = e;
-		n_entries++;
+		entries[n_entries++] = e;
 	}
+}
+
+
+/* is s already in list[0..n-1]? */
+int
+contains(char **list, int n, const char *s)
+{
+	int i;
+
+	for (i = 0; i < n; i++)
+		if (strcmp(list[i], s) == 0)
+			return 1;
+	return 0;
 }
 
 
 void
 list_unauthorized_accesses(FILE *log)
 {
-	int i, j, k;
+	int i, j;
 	int found = 0;
 
 	if (n_entries == 0)
@@ -114,12 +111,11 @@ list_unauthorized_accesses(FILE *log)
 	for (i = 0; i < n_entries; i++) {
 		int uid = entries[i].uid;
 
-		/* process each uid only once */
-		int seen = 0;
+		/* process each uid only once: skip if it appeared earlier */
 		for (j = 0; j < i; j++)
 			if (entries[j].uid == uid)
-				seen = 1;
-		if (seen)
+				break;
+		if (j < i)
 			continue;
 
 		/* collect distinct denied files for this uid */
@@ -130,11 +126,7 @@ list_unauthorized_accesses(FILE *log)
 			if (entries[j].uid != uid || !entries[j].action_denied)
 				continue;
 
-			int dup = 0;
-			for (k = 0; k < n_denied; k++)
-				if (strcmp(denied_files[k], entries[j].file) == 0)
-					dup = 1;
-			if (!dup)
+			if (!contains(denied_files, n_denied, entries[j].file))
 				denied_files[n_denied++] = entries[j].file;
 		}
 
@@ -146,8 +138,6 @@ list_unauthorized_accesses(FILE *log)
 
 	if (!found)
 		printf("(no suspicious users)\n");
-
-	return;
 }
 
 
@@ -155,7 +145,7 @@ void
 list_file_modifications(FILE *log, char *file_to_scan)
 {
 	char target[PATH_MAX];
-	int i, j, u;
+	int i, u;
 
 	if (n_entries == 0)
 		load_log(log);
@@ -166,7 +156,7 @@ list_file_modifications(FILE *log, char *file_to_scan)
 	int n_hashes = 0;
 	const char *prev_hash = NULL;
 
-	if (realpath(file_to_scan, target) == NULL)
+	if (!realpath(file_to_scan, target))
 		snprintf(target, sizeof(target), "%s", file_to_scan);
 
 	for (i = 0; i < n_entries; i++) {
@@ -180,10 +170,8 @@ list_file_modifications(FILE *log, char *file_to_scan)
 			if (uids[u] == e->uid)
 				break;
 		if (u == n_uids) {
-			uids[u] = e->uid;
-			fwrites[u] = 0;
-			changes[u] = 0;
-			n_uids++;
+			fwrites[u] = changes[u] = 0;
+			uids[n_uids++] = e->uid;
 		}
 
 		if (e->action_denied)
@@ -196,14 +184,10 @@ list_file_modifications(FILE *log, char *file_to_scan)
 			continue;
 
 		/* content changed since the previous event on this file? */
-		if (prev_hash != NULL && strcmp(prev_hash, e->filehash) != 0) {
+		if (prev_hash && strcmp(prev_hash, e->filehash) != 0) {
 			changes[u]++;
 
-			int dup = 0;
-			for (j = 0; j < n_hashes; j++)
-				if (strcmp(hashes[j], e->filehash) == 0)
-					dup = 1;
-			if (!dup)
+			if (!contains(hashes, n_hashes, e->filehash))
 				hashes[n_hashes++] = e->filehash;
 		}
 		prev_hash = e->filehash;
@@ -219,8 +203,6 @@ list_file_modifications(FILE *log, char *file_to_scan)
 	for (u = 0; u < n_uids; u++)
 		printf("%d\t%d\t%d\n", uids[u], fwrites[u], changes[u]);
 	printf("Unique modifications: %d\n", n_hashes);
-
-	return;
 }
 
 
@@ -235,7 +217,7 @@ main(int argc, char *argv[])
 		usage();
 
 	log = fopen("./access_audit.log", "r");
-	if (log == NULL) {
+	if (!log) {
 		printf("Error opening log file \"%s\"\n", "./access_audit.log");
 		return 1;
 	}
@@ -263,8 +245,6 @@ main(int argc, char *argv[])
 	}
 
 	fclose(log);
-	argc -= optind;
-	argv += optind;
 
 	return 0;
 }
